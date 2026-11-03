@@ -1,0 +1,16 @@
+__pycache__/
+*.pyc
+.fovea_worker.pid
+.fovea_worker.log
+.keys.json
+keys.json
+fovea_service/data/
+*.bak
+*.bak2
+*.bak3
+*.bak4
+*.bak5
+*.png
+*.jpg
+*.jpeg
+publish/

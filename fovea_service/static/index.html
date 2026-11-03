@@ -1,0 +1,809 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>FOVEA 主动视觉取证 · 本地演示</title>
+<style>
+  :root{
+    --bg:#0f1418; --panel:#161d24; --line:#243440; --txt:#dbe6ef;
+    --muted:#8aa0b2; --accent:#3fa7ff; --ok:#3ddc97; --warn:#ffb454; --bad:#ff6b6b;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);
+       font:14px/1.6 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif}
+  header{padding:14px 20px;border-bottom:1px solid var(--line);display:flex;
+         align-items:center;gap:12px;flex-wrap:wrap}
+  header h1{font-size:16px;margin:0;font-weight:600}
+  header .tag{font-size:12px;color:var(--muted);border:1px solid var(--line);
+              padding:2px 8px;border-radius:999px}
+  main{display:grid;grid-template-columns:minmax(0,1fr) 380px;gap:18px;padding:18px;max-width:1500px;margin:0 auto}
+  @media (max-width:1000px){main{grid-template-columns:1fr}}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px}
+  #stage{position:relative;display:flex;align-items:center;justify-content:center;min-height:320px}
+  canvas{max-width:100%;border-radius:8px;cursor:crosshair;background:#000}
+  .hint{color:var(--muted);font-size:12px;margin-top:8px}
+  label.field{display:block;font-size:12px;color:var(--muted);margin:10px 0 4px}
+  textarea,input[type=text]{width:100%;background:#0d1216;color:var(--txt);
+    border:1px solid var(--line);border-radius:8px;padding:9px 10px;font:13px/1.5 inherit;resize:vertical}
+  .row{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+  button{background:#1d2a34;color:var(--txt);border:1px solid var(--line);
+         border-radius:8px;padding:8px 14px;cursor:pointer;font:13px inherit}
+  button:hover{border-color:var(--accent)}
+  button.primary{background:var(--accent);color:#06121c;border-color:transparent;font-weight:600}
+  button:disabled{opacity:.45;cursor:not-allowed}
+  .modes{display:flex;gap:6px;margin-top:6px}
+  .modes label{flex:1;text-align:center;border:1px solid var(--line);border-radius:8px;
+               padding:7px 4px;font-size:12px;cursor:pointer;color:var(--muted)}
+  .modes input{display:none}
+  .modes input:checked + span{color:#06121c}
+  .modes label:has(input:checked){background:var(--accent);border-color:transparent;font-weight:600}
+  #status{font-size:12px;color:var(--muted);margin-top:10px;min-height:18px}
+  #meta{font-size:12px;color:var(--muted);margin-top:6px}
+  .steps{max-height:300px;overflow:auto;margin-top:8px}
+  .step{display:grid;grid-template-columns:76px 1fr 54px;gap:8px;align-items:center;
+        font-size:12px;padding:3px 0;border-bottom:1px dashed #1e2a34}
+  .bar{height:6px;background:#0d1216;border-radius:3px;overflow:hidden}
+  .bar i{display:block;height:100%;background:var(--accent)}
+  .step.verify .bar i{background:var(--ok)}
+  .step.grid .bar i{background:#7d8fa3}
+  .res{margin-top:12px;font-size:13px;line-height:1.7}
+  .res b{color:var(--accent)}
+  .badge{display:inline-block;font-size:11px;padding:1px 7px;border-radius:999px;margin-left:6px}
+  .badge.hit{background:rgba(61,220,151,.15);color:var(--ok)}
+  .badge.miss{background:rgba(255,107,107,.15);color:var(--bad)}
+  .drop{border:1px dashed var(--line);border-radius:10px;padding:14px;text-align:center;
+        color:var(--muted);font-size:12px;cursor:pointer}
+  .drop.on{border-color:var(--accent);color:var(--accent)}
+  #compareBtn.green{background:var(--ok);color:#06121c;border-color:transparent;font-weight:600}
+  #paraBadge{display:inline-flex;align-items:center;font-size:12px;padding:8px 14px;border-radius:8px;
+             border:1px solid var(--line);color:var(--muted);background:#141c22;transition:.15s}
+  #paraBadge.on{background:var(--ok);color:#06121c;border-color:transparent;font-weight:600}
+  .legend{display:flex;gap:12px;font-size:11px;color:var(--muted);margin-top:8px;flex-wrap:wrap}
+  .sw{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px;vertical-align:middle}
+  .switch{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted);
+          margin-top:12px;cursor:pointer;user-select:none}
+  .switch input{appearance:none;-webkit-appearance:none;width:34px;height:18px;border-radius:999px;
+                background:#2a3743;border:1px solid var(--line);position:relative;cursor:pointer;
+                transition:.15s;flex:none;margin:0}
+  .switch input:checked{background:var(--accent);border-color:transparent}
+  .switch input::after{content:'';position:absolute;top:2px;left:2px;width:12px;height:12px;
+                       border-radius:50%;background:#dbe6ef;transition:.15s}
+  .switch input:checked::after{left:17px;background:#06121c}
+  #truthHint{font-size:12px;color:var(--warn);margin-top:6px;display:none}
+  .stats{margin-top:10px;font-size:12px;color:var(--muted);border:1px dashed var(--line);
+         border-radius:8px;padding:8px 10px;line-height:1.8;display:none}
+  .stats b{color:var(--txt)}
+  .stats .rate{color:var(--accent);font-weight:600}
+  .stats .row2{display:flex;justify-content:space-between;gap:8px}
+</style>
+</head>
+<body>
+<header>
+  <h1>FOVEA 主动视觉取证</h1>
+  <span class="tag">上传图片 · 输入提示词 · 看它如何找目标</span>
+  <span class="tag" id="backendTag">backend: …</span>
+  <span class="tag" id="roleTag">…</span>
+  <a id="adminLink" href="/admin" style="display:none;color:#06121c;background:#3fa7ff;border-radius:8px;padding:5px 12px;font-size:12px;font-weight:600;text-decoration:none">后台</a>
+  <button id="logoutBtn" style="margin-left:auto;background:#1d2a34;color:#dbe6ef;border:1px solid #243440;border-radius:8px;padding:5px 12px;cursor:pointer;font:12px inherit">退出</button>
+</header>
+
+<main>
+  <section class="panel">
+    <div id="stage"><canvas id="cv" width="900" height="600"></canvas></div>
+    <div class="legend">
+      <span><i class="sw" style="background:#3fa7ff"></i>候选（网格/缩放）</span>
+      <span><i class="sw" style="background:#3ddc97"></i>叶子验证</span>
+      <span><i class="sw" style="background:#ff6b6b"></i>最终选定</span>
+      <span><i class="sw" style="background:#ffb454"></i>原定真值（勾选后显示）</span>
+    </div>
+    <div class="hint">在图上按住拖动，可手动画出「初始种子框」（默认画面中心 40%）。拖动后点“开始搜索”。</div>
+    <div id="meta"></div>
+  </section>
+
+  <aside class="panel">
+    <div class="drop" id="drop">点击或拖入图片上传（≤15MB，会自动缩到长边 4096）</div>
+    <input type="file" id="file" accept="image/*" style="display:none" />
+    <div class="row">
+      <button id="demoBtn">用示例图（合成场景）</button>
+      <button id="newBtn">换一题</button>
+      <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)">
+        <input type="checkbox" id="showTruth" /> 显示原定真值
+      </label>
+    </div>
+
+    <label class="switch">
+      <input type="checkbox" id="autoReview" />
+      <span>自动审查（设真值 · 判命中 · 统计）</span>
+    </label>
+    <div id="truthHint">未见真值：请在图上单击目标位置，作为这题的标准答案。</div>
+
+    <label class="field">提示词 / 问题</label>
+    <textarea id="q" rows="2">图中最大的足球场在哪里？</textarea>
+
+    <label class="field">搜索方式（可多选：选 2 种以上即可并行对比）</label>
+    <div class="modes" id="modeChips">
+      <label><input type="checkbox" name="mode" value="greedy" checked /><span>greedy</span></label>
+      <label><input type="checkbox" name="mode" value="lookahead" /><span>lookahead</span></label>
+      <label><input type="checkbox" name="mode" value="hrd" /><span>hrd（改进）</span></label>
+    </div>
+    <div id="modeHint" style="font-size:12px;color:var(--warn);margin-top:6px;min-height:16px"></div>
+
+    <div class="row">
+      <button class="primary" id="runBtn" disabled>开始搜索</button>
+      <span id="paraBadge">并行实验</span>
+      <button id="resetBtn">重置视图</button>
+    </div>
+    <div id="quotaHint" style="font-size:12px;color:var(--muted);margin-top:6px;min-height:16px"></div>
+    <div id="status">等待图片…</div>
+
+    <label class="field">探测步骤（分数 = Yes 的比例）</label>
+    <div class="steps" id="steps"></div>
+    <div class="res" id="res"></div>
+    <div class="stats" id="stats"></div>
+  </aside>
+
+  <section class="panel" id="cmpPanel" style="display:none;grid-column:1/-1">
+    <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:10px">
+      <b style="font-size:13px">并行实验 · 搜索方式对比</b>
+      <span style="font-size:11px;color:var(--muted)">同一张图、同一个种子框，逐种算法各跑一次；轨迹颜色由深到浅表示先后</span>
+    </div>
+    <div id="cmpBody"></div>
+  </section>
+</main>
+
+<script>
+const cv = document.getElementById('cv');
+const ctx = cv.getContext('2d');
+let BASE_DATA = null;
+const baseCv = document.createElement('canvas');   // 缓存缩放后的底图，避免每帧重绘整张原图
+const bctx = baseCv.getContext('2d');
+let lastDrawn = '';
+const $ = (id) => document.getElementById(id);
+
+let IMG = null, imageId = null, natural = {w:0,h:0};
+let seed = {u:0.3, v:0.3, w:0.4, h:0.4};
+let steps = [], result = null, taskId = null, timer = null;
+let truth = null, showTruth = false;
+let autoReview = false, moved = 0, localTask = false;let drag = null;
+let lastStatus = '', submittedAt = 0;
+let busy = false, ME = null;
+
+function selectedModes(){
+  return [...document.querySelectorAll('input[name=mode]:checked')].map(x=>x.value);
+}
+
+function updateControls(){
+  const n = selectedModes().length;
+  const ready = !!imageId && !busy;
+  $('runBtn').disabled = !ready || n === 0;
+  const parallel = n >= 2;
+  $('paraBadge').classList.toggle('on', parallel);
+
+  const hint = $('modeHint');
+  if (n === 0){ hint.style.color = 'var(--warn)'; hint.textContent = '请至少选择一种算法。'; }
+  else if (n === 1){ hint.style.color = 'var(--muted)'; hint.textContent = '单项模式：点「开始搜索」跑这 1 种算法。'; }
+  else { hint.style.color = 'var(--ok)'; hint.textContent = `并行模式已开启：点「开始搜索」将同时跑 ${n} 种算法并生成对比数据。`; }
+  updateQuotaHint(n);
+}
+
+function updateQuotaHint(n){
+  const el = $('quotaHint');
+  if (!el) return;
+  if (!ME){ el.textContent = ''; return; }
+  if (ME.role === 'guest'){
+    const left = ME.quota_left;
+    const need = Math.max(1, n);
+    el.style.color = (n >= 2 && left < need) ? 'var(--warn)' : 'var(--muted)';
+    el.textContent = `访客额度：今日剩余 ${left} 次` +
+      (n >= 2 ? `；并行 ${n} 种算法将扣 ${n} 次${left < need ? '（不足）' : ''}` : '；单项运行扣 1 次');
+  } else {
+    el.style.color = 'var(--muted)';
+    el.textContent = ME.role === 'admin' ? '管理员：无限次' : '参与者：无限次';
+  }
+}
+
+async function refreshMe(){
+  try{
+    const me = await api('/api/me');
+    ME = me;
+    const nm = me.name || '';
+    $('roleTag').textContent = me.role === 'guest'
+      ? `访客 · 今日剩余 ${me.quota_left} 张`
+      : `${me.role === 'admin' ? '管理员' : '参与者'} · ${nm} · 无限次`;
+    if (me.role === 'admin') $('adminLink').style.display = 'inline-block';
+    updateControls();
+  }catch(e){}
+}
+
+/* ---------- 图片与画布 ---------- */
+function fitCanvas(){
+  if(!IMG) return;
+  const box = $('stage').getBoundingClientRect();
+  const maxW = Math.max(320, box.width - 8);
+  const ratio = natural.h / natural.w;
+  const w = Math.min(maxW, 1100);
+  const h = Math.round(w * ratio);
+  const dpr = window.devicePixelRatio || 1;
+  cv.style.width = w + 'px'; cv.style.height = h + 'px';
+  cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  // 把原图缩放到显示尺寸缓存起来：之后每帧只贴这张小图，手机才不卡
+  baseCv.width = cv.width; baseCv.height = cv.height;
+  bctx.setTransform(1,0,0,1,0,0);
+  bctx.clearRect(0, 0, baseCv.width, baseCv.height);
+  bctx.drawImage(IMG, 0, 0, baseCv.width, baseCv.height);
+  try { BASE_DATA = bctx.getImageData(0, 0, baseCv.width, baseCv.height); }
+  catch (e) { BASE_DATA = null; }
+  lastDrawn = '';
+  draw();
+}
+
+function setImage(url, id, meta){
+  IMG = new Image();
+  IMG.onload = () => {
+    natural = {w: IMG.naturalWidth, h: IMG.naturalHeight};
+    imageId = id;
+    steps = []; result = null; taskId = null;
+    const t0 = meta && meta.truth;
+    truth = t0 ? (t0.kind ? t0 : Object.assign({kind:'scene'}, t0)) : null;
+    $('meta').textContent = meta && meta.note ? meta.note : '';
+    $('res').innerHTML = ''; renderSteps();
+    $('status').textContent = '图片就绪：' + natural.w + '×' + natural.h + '，可以开始搜索';
+    imageId = id;
+    updateControls();
+    syncTruthHint();
+    fitCanvas();
+  };
+  IMG.src = url;
+}
+
+function toPx(b){ return {x: b[0]*natural.w, y: b[1]*natural.h, w: b[2]*natural.w, h: b[3]*natural.h}; }
+
+function drawBox(b, color, alpha, label, dashed, lw){
+  const p = toPx(b);
+  const k = cv.clientWidth / natural.w;
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.fillStyle = color;
+  ctx.fillRect(p.x*k, p.y*k, p.w*k, p.h*k);
+  ctx.globalAlpha = 1;
+  ctx.strokeStyle = color; ctx.lineWidth = lw || 1.5;
+  if (dashed) ctx.setLineDash([6,4]);
+  ctx.strokeRect(p.x*k, p.y*k, p.w*k, p.h*k);
+  ctx.setLineDash([]);
+  if (label){
+    ctx.font = '11px ui-monospace, Menlo, monospace';
+    const tw = ctx.measureText(label).width + 8;
+    ctx.globalAlpha = .85; ctx.fillStyle = '#000';
+    ctx.fillRect(p.x*k, Math.max(0, p.y*k-15), tw, 15);
+    ctx.globalAlpha = 1; ctx.fillStyle = color;
+    ctx.fillText(label, p.x*k+4, Math.max(11, p.y*k-4));
+  }
+  ctx.restore();
+}
+
+/* 沿某方向采样像素，返回"越平整越小"的分数（用来挑不遮挡物体的那一侧） */
+function sideBusyScore(ax, ay, dx, dy){
+  if (!BASE_DATA) return 0;
+  const sx = baseCv.width / cv.clientWidth, sy = baseCv.height / cv.clientHeight;
+  let sum = 0, n = 0;
+  for (let d = 14; d <= 74; d += 6){
+    const px = Math.round((ax + dx*d) * sx), py = Math.round((ay + dy*d) * sy);
+    if (px < 3 || py < 3 || px >= baseCv.width-3 || py >= baseCv.height-3){ sum += 60; n++; continue; }
+    const D = BASE_DATA.data, Wd = baseCv.width;
+    const i  = (py*Wd + px)*4;
+    const i1 = (py*Wd + Math.min(Wd-1, px+2))*4;
+    const i2 = (Math.min(baseCv.height-1, py+2)*Wd + px)*4;
+    const l0 = D[i]*0.3 + D[i+1]*0.59 + D[i+2]*0.11;
+    const l1 = D[i1]*0.3 + D[i1+1]*0.59 + D[i1+2]*0.11;
+    const l2 = D[i2]*0.3 + D[i2+1]*0.59 + D[i2+2]*0.11;
+    sum += Math.abs(l0-l1) + Math.abs(l0-l2);
+    n++;
+  }
+  return n ? sum / n : 1e9;
+}
+
+/* 答案标注：红色箭头（尖端停在目标外侧，不压物体），方向取背景最平整的一侧 */
+function drawAnswerArrow(ax, ay){
+  const W = cv.clientWidth, H = cv.clientHeight, base = Math.min(W, H);
+  const DIRS = [[0,-1],[0,1],[-1,0],[1,0],[.7071,-.7071],[-.7071,-.7071],[.7071,.7071],[-.7071,.7071]];
+
+  let ux = 0, uy = -1, best = Infinity;
+  for (const d of DIRS){
+    const room = Math.min(
+      d[0] >  1e-6 ? (W-16-ax)/d[0] : (d[0] < -1e-6 ? (ax-16)/d[0] : Infinity),
+      d[1] >  1e-6 ? (H-16-ay)/d[1] : (d[1] < -1e-6 ? (ay-16)/d[1] : Infinity));
+    if (room < 64) continue;
+    const score = sideBusyScore(ax, ay, d[0], d[1]);
+    if (score < best){ best = score; ux = d[0]; uy = d[1]; }
+  }
+
+  const gap = Math.max(10, Math.min(16, base*0.024));
+  const len = Math.max(34, Math.min(56, base*0.088));
+  const Tx = ax + ux*gap,        Ty = ay + uy*gap;              // 尖端
+  const Bx = ax + ux*(gap+len),  By = ay + uy*(gap+len);        // 尾端
+  const hl = len*0.42, hw = len*0.34;
+  const hbx = Tx + ux*hl, hby = Ty + uy*hl;                     // 箭头底边中心
+  const qx = -uy, qy = ux;                                      // 垂直方向
+
+  const isTruth = !!(result && result.answer_point_method === 'scene_truth');
+  const LBL = isTruth ? '测试真值' : '答案';
+  const COL = '#e8232a';
+
+  ctx.save();
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+
+  // 杆：尾宽尖细的多边形（比直线更有质感），白色描边打底
+  const tailW = Math.max(3.2, len*0.075), tipW = Math.max(1.6, tailW*0.5);
+  const shaftPath = () => {
+    ctx.beginPath();
+    ctx.moveTo(Bx + qx*tailW, By + qy*tailW);
+    ctx.lineTo(Tx + qx*tipW, Ty + qy*tipW);
+    ctx.lineTo(Tx - qx*tipW, Ty - qy*tipW);
+    ctx.lineTo(Bx - qx*tailW, By - qy*tailW);
+    ctx.closePath();
+  };
+  const headPath = () => {
+    ctx.beginPath();
+    ctx.moveTo(Tx, Ty);
+    ctx.lineTo(hbx + qx*hw, hby + qy*hw);
+    ctx.lineTo(hbx - qx*hw, hby - qy*hw);
+    ctx.closePath();
+  };
+
+  // 投影
+  ctx.save();
+  ctx.shadowColor = 'rgba(0,0,0,.45)'; ctx.shadowBlur = 6; ctx.shadowOffsetY = 2;
+  ctx.fillStyle = COL; shaftPath(); ctx.fill(); headPath(); ctx.fill();
+  ctx.restore();
+
+  // 白描边
+  ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 3.2;
+  shaftPath(); ctx.stroke(); headPath(); ctx.stroke();
+
+  // 红填充
+  ctx.fillStyle = COL;
+  shaftPath(); ctx.fill(); headPath(); ctx.fill();
+
+  // 标签：圆角底 + 蓝色文字
+  ctx.font = 'bold 12px "Microsoft YaHei", ui-monospace, monospace';
+  const tw = ctx.measureText(LBL).width;
+  const lx = Bx + ux*14, ly = By + uy*14;
+  const padX = 7, padY = 4, r = 7;
+  const bx0 = Math.max(6, Math.min(W - tw - padX*2 - 6, lx - tw/2 - padX));
+  const by0 = Math.max(6, Math.min(H - 22 - 6, ly - 9 - padY));
+  const bw = tw + padX*2, bh = 18 + padY;
+  const round = (x, y, w, h, rr) => {
+    ctx.beginPath();
+    ctx.moveTo(x+rr, y);
+    ctx.arcTo(x+w, y, x+w, y+h, rr);
+    ctx.arcTo(x+w, y+h, x, y+h, rr);
+    ctx.arcTo(x, y+h, x, y, rr);
+    ctx.arcTo(x, y, x+w, y, rr);
+    ctx.closePath();
+  };
+  ctx.save();
+  round(bx0, by0, bw, bh, r);
+  ctx.fillStyle = 'rgba(6,18,28,.82)'; ctx.fill();
+  ctx.strokeStyle = 'rgba(63,167,255,.55)'; ctx.lineWidth = 1; ctx.stroke();
+  ctx.fillStyle = '#4db8ff';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(LBL, bx0 + bw/2, by0 + bh/2 + 0.5);
+  ctx.restore();
+  ctx.restore();
+}
+
+function draw(){
+  if(!IMG) return;
+  const k = cv.clientWidth / natural.w;
+  ctx.clearRect(0,0,cv.width,cv.height);
+  ctx.drawImage(baseCv, 0, 0, cv.clientWidth, cv.clientHeight);
+
+  if (showTruth && truth){
+    const k2 = cv.clientWidth / natural.w;
+    if (truth.kind === 'point'){
+      const x = truth.point[0]*natural.w*k2, y = truth.point[1]*natural.h*k2;
+      ctx.save();
+      ctx.strokeStyle = '#ffb454'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(x-12,y); ctx.lineTo(x+12,y);
+      ctx.moveTo(x,y-12); ctx.lineTo(x,y+12); ctx.stroke();
+      ctx.beginPath(); ctx.arc(x,y,6,0,Math.PI*2); ctx.stroke();
+      ctx.font = '11px ui-monospace, Menlo, monospace'; ctx.fillStyle = '#ffb454';
+      ctx.fillText('真值点', x+10, y-8);
+      ctx.restore();
+    } else if (truth.target){
+      const n = truth;
+      drawBox([n.target[0]-n.size/2, n.target[1]-n.size/2, n.size, n.size], '#ffb454', .25, '真值', true, 2);
+      (n.distractors||[]).forEach(d=>{
+        drawBox([d[0][0]-d[1]/2, d[0][1]-d[1]/2, d[1], d[1]], '#ffb454', .12, '', true, 1);
+      });
+    }
+  }
+
+  steps.slice(-14).forEach(s=>{
+    const c = s.tag === 'verify' ? '#3ddc97' : (s.tag === 'grid' ? '#7d8fa3' : '#3fa7ff');
+    drawBox(s.box, c, .10 + .35*Math.min(1, s.score), (s.tag||'') + ' ' + s.score.toFixed(2), false, 1);
+  });
+
+  drawBox([seed.u, seed.v, seed.w, seed.h], '#e8eef5', .06, 'seed', true, 1.5);
+
+  if (result && result.box){
+    drawBox(result.box, '#ff6b6b', .18, 'final ' + (result.score||0).toFixed(2), false, 2.5);
+  }
+
+  /* 答案位置：指向性箭头（停在目标建筑外，不压住它） */
+  if (result && result.answer_point){
+    const ax = result.answer_point[0]*cv.clientWidth;
+    const ay = result.answer_point[1]*cv.clientHeight;
+    drawAnswerArrow(ax, ay);
+  }
+}
+
+/* ---------- 交互：拖动种子框 ---------- */
+function evPos(e){
+  const r = cv.getBoundingClientRect();
+  return {x:(e.clientX-r.left)/r.width, y:(e.clientY-r.top)/r.height};
+}
+cv.addEventListener('mousedown', e=>{ drag = evPos(e); moved = 0; });
+cv.addEventListener('mousemove', e=>{
+  if(!drag) return;
+  const p = evPos(e);
+  moved = Math.max(moved, Math.abs(p.x-drag.x), Math.abs(p.y-drag.y));
+  const u = Math.min(drag.x,p.x), v = Math.min(drag.y,p.y);
+  const w = Math.max(0.02, Math.abs(p.x-drag.x)), h = Math.max(0.02, Math.abs(p.y-drag.y));
+  seed = {u, v, w:Math.min(w,1-u), h:Math.min(h,1-v)};
+  draw();
+});
+window.addEventListener('mouseup', ()=>{
+  if (drag && moved < 0.01 && autoReview && imageId) setTruthPoint(drag);
+  drag = null;
+});
+
+/* ---------- 网络 ---------- */
+async function api(path, opt){
+  const r = await fetch(path, opt);
+  const j = await r.json().catch(()=>({error:'bad json'}));
+  if (r.status === 401){ location.href = '/'; throw new Error('未登录'); }
+  if(!r.ok) throw new Error(j.error || ('HTTP '+r.status));
+  return j;
+}
+
+async function loadDemo(force){
+  $('status').textContent = '正在生成示例图…';
+  try{
+    const j = await api('/api/demo' + (force ? '?new=1' : ''));
+    setImage('/api/image/'+j.image_id, j.image_id, j);
+    showTruth = $('showTruth').checked;
+    draw();
+  }catch(e){ $('status').textContent = '示例图失败：'+e.message; }
+}
+
+function upload(file){
+  if(!file) return;
+  if(file.size > 15*1024*1024){ $('status').textContent='图片太大（>15MB）'; return; }
+  $('status').textContent = '上传中…';
+  const fr = new FileReader();
+  fr.onload = async () => {
+    try{
+      const j = await api('/api/upload', {method:'POST', headers:{'Content-Type':'application/json'},
+                                          body: JSON.stringify({data: fr.result})});
+      setImage('/api/image/'+j.image_id, j.image_id, j);
+      draw();
+    }catch(e){ $('status').textContent='上传失败：'+e.message; }
+  };
+  fr.readAsDataURL(file);
+}
+
+$('drop').onclick = ()=> $('file').click();
+$('file').onchange = e => upload(e.target.files[0]);
+['dragenter','dragover'].forEach(t=>$('drop').addEventListener(t,e=>{e.preventDefault();$('drop').classList.add('on');}));
+['dragleave','drop'].forEach(t=>$('drop').addEventListener(t,e=>{e.preventDefault();$('drop').classList.remove('on');}));
+$('drop').addEventListener('drop', e=> upload(e.dataTransfer.files[0]));
+$('demoBtn').onclick = ()=> loadDemo(false);
+$('newBtn').onclick = ()=> loadDemo(true);
+$('showTruth').onchange = e => { showTruth = e.target.checked; draw(); };
+$('resetBtn').onclick = () => { seed={u:0.3,v:0.3,w:0.4,h:0.4}; draw(); };
+$('autoReview').onchange = e => {
+  autoReview = e.target.checked;
+  if (autoReview && truth){ showTruth = true; $('showTruth').checked = true; }
+  syncTruthHint(); draw(); refreshStats();
+};
+
+/* ---------- 运行与轮询 ---------- */
+async function run(){
+  if(!imageId || busy) return;
+  const modes = selectedModes();
+  if (modes.length === 0){
+    $('status').textContent = '请至少选择一种算法。';
+    $('modeHint').style.color = 'var(--warn)';
+    return;
+  }
+  if (modes.length >= 2){                 // 多选 = 并行模式，仍然走「开始搜索」
+    return runParallel(modes);
+  }
+  const mode = modes[0];
+  if (autoReview && !truth){
+    $('status').textContent = '自动审查已开，但还没有真值：请先在图上单击目标位置。';
+    $('truthHint').style.display = 'block';
+    return;
+  }
+  busy = true; updateControls();
+  clearTimeout(timer);
+  $('runBtn').disabled = true;
+  $('status').textContent = '已提交，排队中…';
+  steps = []; result = null; renderSteps(); $('res').innerHTML=''; draw();
+  try{
+    const j = await api('/api/query', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({image_id: imageId, question: $('q').value, mode,
+                            seed:[seed.u,seed.v,seed.w,seed.h], auto: autoReview})});
+    taskId = j.task_id;
+    localTask = !!j.local;
+    submittedAt = Date.now();
+    lastStatus = 'queued';
+    if (localTask) $('status').textContent = '本地合成模拟（不调 API、不花额度），计算中…';
+    poll();
+  }catch(e){
+    $('status').textContent = '提交失败：'+e.message; $('runBtn').disabled=false;
+    busy = false; updateControls();
+  }
+}
+
+async function poll(){
+  clearTimeout(timer);
+  try{
+    const t = await api('/api/task/'+taskId);
+    const n = (t.steps||[]).length;
+    const changed = (n !== steps.length);
+    steps = t.steps || [];
+    if (changed) renderSteps();
+    if (t.status === 'done'){
+      result = t.result;
+      $('status').textContent = `完成 · ${t.mode} · ${steps.length} 次探测 · ${t.elapsed}s`
+        + (localTask ? ' · 本地 sim' : ' · 经 worker 调 VLM');
+      $('runBtn').disabled = false;
+      draw(); renderResult(t);
+      if (autoReview) refreshStats();
+      busy = false; updateControls(); refreshMe();
+      return;
+    }
+    if (t.status === 'error'){
+      $('status').textContent = '出错：' + (t.error || '未知'); $('runBtn').disabled = false;
+      busy = false; updateControls(); refreshMe(); return;
+    }
+    const waited = (Date.now() - submittedAt) / 1000;
+    if (t.status === 'queued'){
+      $('status').textContent = waited > 15
+        ? `排队中…（已等 ${Math.round(waited)} 秒，可能没有在线 worker；可稍后重试）`
+        : '排队中…';
+      if (waited > 60){                       // 别让按钮永远锁死
+        $('runBtn').disabled = false;
+        $('status').textContent = `排队超过 60 秒，没有 worker 领取。任务仍保留在队列里，可重新提交。`;
+      }
+    } else {
+      $('status').textContent = `运行中… 已探测 ${steps.length} 次（${t.elapsed}s）`;
+    }
+    if (changed || t.status !== lastStatus) draw();
+    lastStatus = t.status;
+    timer = setTimeout(poll, 600);
+  }catch(e){
+    $('status').textContent = '轮询失败：'+e.message;
+    timer = setTimeout(poll, 1200);
+  }
+}
+
+function renderSteps(){
+  const el = $('steps');
+  if(!steps.length){ el.innerHTML = '<div style="color:#6b7f90;font-size:12px">还没有探测</div>'; return; }
+  el.innerHTML = steps.map(s=>`
+    <div class="step ${s.tag==='verify'?'verify':(s.tag==='grid'?'grid':'')}">
+      <span style="color:#8aa0b2">${s.tag||''}</span>
+      <span class="bar"><i style="width:${Math.round((s.score||0)*100)}%"></i></span>
+      <span style="text-align:right">${(s.score||0).toFixed(2)}</span>
+    </div>`).join('');
+  el.scrollTop = el.scrollHeight;
+}
+
+function renderResult(t){
+  const b = (result.box||[]).map(x=>x.toFixed(3)).join(', ');
+  let hit = '';
+  if (typeof result.hit === 'boolean'){
+    hit = `<span class="badge ${result.hit?'hit':'miss'}">${result.hit?'✓ 命中真值':'✗ 未命中真值'}</span>`;
+  } else if (!autoReview){
+    hit = `<span class="badge" style="background:rgba(138,160,178,.12);color:#8aa0b2">仅输出最终框</span>`;
+  } else {
+    hit = `<span class="badge" style="background:rgba(255,180,84,.12);color:#ffb454">未判定（无真值）</span>`;
+  }
+  const esc = (s)=> String(s).replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  const ver = (result.answer_verified === false)
+      ? `<div style="color:var(--warn);font-size:12px">⚠ 这个名字没有出现在模型自读的标签里，可能是误读或编造——以箭头所指位置为准</div>`
+      : (result.answer_verified === true
+          ? `<div style="color:var(--ok);font-size:12px">✓ 名称与图上可读标签一致</div>` : '');
+  const ans = (result.answer && String(result.answer).trim())      ? `<div style="margin-top:6px">模型答案：<b style="color:#ff6b6b">${esc(result.answer)}</b>`
+        + (result.answer_point ? `　@ 箭头 (${result.answer_point[0].toFixed(3)}, ${result.answer_point[1].toFixed(3)})` : '')
+        + (result.answer_reason ? `<div style="color:var(--muted);font-size:12px">依据：${esc(result.answer_reason)}</div>` : '')
+        + ver + `</div>`
+      : (result.answer_error
+          ? `<div style="margin-top:6px;color:var(--bad)">答题调用失败：${esc(result.answer_error)}</div>`
+          : (localTask ? '' : `<div style="margin-top:6px;color:var(--muted)">（模型没给出简短答案，以箭头所指位置为准）</div>`));
+  const calls = steps.reduce((a,s)=> a + (s.samples || 1), 0);
+  $('res').innerHTML = `
+    <div>最终框（归一化 u,v,w,h）：<b>[${b}]</b>${hit}</div>
+    <div>最终 probe 分：<b>${(result.score??0).toFixed(2)}</b> · 搜索步数：<b>${steps.length}</b> · 模型调用：<b>${calls}</b> 次 · 用时 <b>${t.elapsed}s</b></div>${ans}`;
+}
+
+/* ---------- 自动审查 ---------- */
+async function setTruthPoint(p){
+  try{
+    const j = await api('/api/truth', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({image_id: imageId, point:[p.x, p.y]})});
+    truth = j.truth || {kind:'point', point:[p.x, p.y]};
+    showTruth = true; $('showTruth').checked = true;
+    $('status').textContent = `已设真值点：(${(p.x*100).toFixed(1)}%, ${(p.y*100).toFixed(1)}%)`
+                              + (truth.kind === 'scene' ? '（该图自带合成真值，点选已记录但以场景真值为准）' : '');
+    syncTruthHint(); draw();
+  }catch(e){ $('status').textContent = '设置真值失败：' + e.message; }
+}
+
+function syncTruthHint(){
+  $('truthHint').style.display = (autoReview && imageId && !truth) ? 'block' : 'none';
+}
+
+async function refreshStats(){
+  const el = $('stats');
+  if (!autoReview){ el.style.display = 'none'; return; }
+  try{
+    const s = await api('/api/stats');
+    const r = s.review || {judged:0, hits:0, rate:0, by_mode:{}};
+    const rows = Object.entries(r.by_mode || {}).map(([m,v]) =>
+      `<div class="row2"><span>${m}</span><span>${v.hits}/${v.judged} · <span class="rate">${(v.rate*100).toFixed(1)}%</span></span></div>`
+    ).join('');
+    el.innerHTML = `<div class="row2"><span>自动审查累计（已判定任务）</span>
+        <span><b>${r.hits}</b>/${r.judged} · <span class="rate">${(r.rate*100).toFixed(1)}%</span></span></div>${rows}`;
+    el.style.display = 'block';
+  }catch(e){ el.style.display = 'none'; }
+}
+
+/* ---------- 对比实验：同一张图跑多种算法，并排看搜索轨迹 ---------- */
+const CMP_COLORS = {greedy:'#3fa7ff', lookahead:'#b18cff', hrd:'#3ddc97'};
+
+async function runOneMode(mode){
+  const j = await api('/api/query', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({image_id: imageId, question: $('q').value, mode,
+                          seed:[seed.u,seed.v,seed.w,seed.h], auto:false})});
+  const tid = j.task_id;
+  for(;;){
+    const t = await api('/api/task/'+tid);
+    if (t.status === 'done') return {mode, steps:t.steps||[], result:t.result, elapsed:t.elapsed};
+    if (t.status === 'error') return {mode, steps:t.steps||[], error:t.error||'未知错误'};
+    await new Promise(r=>setTimeout(r, 400));
+  }
+}
+
+async function runParallel(modes){
+  if(!imageId || busy) return;
+  if (modes.length < 2){
+    $('status').textContent = '并行模式需要勾选两种以上算法。';
+    return;
+  }
+  if (ME && ME.role === 'guest' && ME.quota_left < modes.length){
+    $('status').textContent = `访客额度不足：本次并行需 ${modes.length} 次，今日只剩 ${ME.quota_left} 次。`;
+    return;
+  }
+  busy = true; clearTimeout(timer); updateControls();
+  $('cmpPanel').style.display = 'block';
+  const outs = [];
+  try{
+    for (const m of modes){
+      $('status').textContent = `并行实验中… 第 ${outs.length + 1}/${modes.length} 种：${m}`;
+      $('cmpBody').innerHTML = `<div style="color:var(--muted);font-size:12px">正在跑 <b style="color:${CMP_COLORS[m]}">${m}</b> …（第 ${outs.length + 1}/${modes.length} 种）</div>`;
+      try { outs.push(await runOneMode(m)); }
+      catch(e){ outs.push({mode:m, steps:[], error:e.message}); }
+    }
+    $('status').textContent = `并行完成：${modes.length} 种算法，对比数据见下方。`;
+  } finally {
+    busy = false;
+    renderCompare(outs);
+    updateControls();
+    refreshMe();
+  }
+}
+
+function renderCompare(outs){
+  const areaPct = (b)=> b ? (b[2]*b[3]*100).toFixed(1) : '—';
+  const rows = outs.map(o=>{
+    const r = o.result || {};
+    const calls = (o.steps||[]).reduce((a,s)=>a+(s.samples||1),0);
+    return `<tr>
+      <td style="color:${CMP_COLORS[o.mode]}">${o.mode}</td>
+      <td>${(o.steps||[]).length}</td>
+      <td>${calls}</td>
+      <td>${o.error ? '<span style="color:var(--bad)">失败</span>' : (r.score!=null? r.score.toFixed(2):'—')}</td>
+      <td>${areaPct(r.box)}${r.box?'%':''}</td>
+      <td>${o.elapsed!=null? o.elapsed.toFixed(1)+'s':'—'}</td>
+    </tr>`;
+  }).join('');
+
+  $('cmpBody').innerHTML = `
+    <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start">
+      <div id="cmpThumbs" style="display:flex;gap:10px;flex-wrap:wrap"></div>
+      <div>
+        <canvas id="cmpChart" width="460" height="190" style="background:#0d1216;border:1px solid var(--line);border-radius:8px"></canvas>
+        <div style="font-size:11px;color:var(--muted);margin-top:4px">横轴：探测步序号　纵轴：候选框面积占比（%）——看谁把框收得更小</div>
+      </div>
+    </div>
+    <table style="margin-top:12px"><thead><tr>
+      <th>算法</th><th>步数</th><th>调用</th><th>最终分</th><th>框面积</th><th>耗时</th>
+    </tr></thead><tbody>${rows}</tbody></table>`;
+
+  const thumbs = $('cmpThumbs');
+  outs.forEach(o=>{
+    const holder = document.createElement('div');
+    holder.style.cssText = 'text-align:center';
+    const c = document.createElement('canvas');
+    const w = 250, h = Math.round(w * natural.h / natural.w);
+    c.width = w; c.height = h;
+    c.style.cssText = 'border-radius:8px;border:1px solid var(--line);display:block';
+    const ctx2 = c.getContext('2d');
+    ctx2.drawImage(baseCv, 0, 0, w, h);
+    const k = w / natural.w;
+    const n = (o.steps||[]).length;
+    (o.steps||[]).forEach((s,i)=>{
+      const p = toPx(s.box);
+      const a = 0.28 + 0.6*(i/Math.max(1,n-1));
+      ctx2.strokeStyle = `rgba(120,190,255,${a})`;
+      ctx2.lineWidth = 1.4;
+      ctx2.strokeRect(p.x*k, p.y*k, p.w*k, p.h*k);
+    });
+    if (o.result && o.result.box){
+      const p = toPx(o.result.box);
+      ctx2.strokeStyle = '#ff6b6b'; ctx2.lineWidth = 2.4;
+      ctx2.strokeRect(p.x*k, p.y*k, p.w*k, p.h*k);
+    }
+    holder.appendChild(c);
+    const cap = document.createElement('div');
+    cap.style.cssText = `font-size:12px;color:${CMP_COLORS[o.mode]};margin-top:6px`;
+    cap.textContent = o.mode + (o.error ? '（失败）' : '');
+    holder.appendChild(cap);
+    thumbs.appendChild(holder);
+  });
+
+  const ch = $('cmpChart'), cx = ch.getContext('2d');
+  const padL = 44, padB = 26, padT = 14, padR = 14;
+  const W = ch.width, H = ch.height;
+  const maxSteps = Math.max(2, ...outs.map(o=>(o.steps||[]).length));
+  const maxArea = Math.max(1, ...outs.flatMap(o=>(o.steps||[]).map(s=>s.box[2]*s.box[3]*100)));
+  cx.strokeStyle = '#243440'; cx.lineWidth = 1;
+  cx.beginPath(); cx.moveTo(padL, padT); cx.lineTo(padL, H-padB); cx.lineTo(W-padR, H-padB); cx.stroke();
+  cx.fillStyle = '#8aa0b2'; cx.font = '11px ui-monospace, monospace';
+  cx.fillText(maxArea.toFixed(0)+'%', 6, padT+8);
+  cx.fillText('0%', 20, H-padB+4);
+  cx.fillText('步数', W-padR-24, H-padB+18);
+  const X = i => padL + (W-padL-padR) * (i/Math.max(1, maxSteps-1));
+  const Y = v => (H-padB) - (H-padB-padT) * (v/maxArea);
+  outs.forEach(o=>{
+    const pts = (o.steps||[]).map((s,i)=>[X(i), Y(s.box[2]*s.box[3]*100)]);
+    if(!pts.length) return;
+    cx.strokeStyle = CMP_COLORS[o.mode] || '#888'; cx.lineWidth = 2;
+    cx.beginPath(); pts.forEach((p,i)=> i? cx.lineTo(p[0],p[1]) : cx.moveTo(p[0],p[1])); cx.stroke();
+    pts.forEach(p=>{ cx.fillStyle = CMP_COLORS[o.mode]||'#888'; cx.beginPath(); cx.arc(p[0],p[1],2.5,0,Math.PI*2); cx.fill(); });
+  });
+}
+
+$('runBtn').onclick = run;
+window.addEventListener('resize', ()=>{ clearTimeout(window.__rz); window.__rz = setTimeout(fitCanvas, 160); });
+$('logoutBtn').onclick = async ()=>{ await fetch('/api/logout',{method:'POST'}); location.href='/'; };
+document.querySelectorAll('input[name=mode]').forEach(el => el.addEventListener('change', updateControls));
+updateControls();
+refreshMe();
+(async ()=>{
+  try{
+    const h = await api('/api/health');
+    const q = (h.counts && h.counts.queued) || 0;
+    $('backendTag').textContent = `backend: ${h.backend} · ${h.mode} · ${h.model.split('/').pop()} · 队列 ${q}`;
+  }catch(e){}
+  loadDemo();
+})();
+</script>
+</body>
+</html>

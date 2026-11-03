@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>FOVEA · 后台</title>
+<style>
+  :root{--bg:#0f1418;--panel:#161d24;--line:#243440;--txt:#dbe6ef;--muted:#8aa0b2;--accent:#3fa7ff;--ok:#3ddc97;--warn:#ffb454;--bad:#ff6b6b}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);font:14px/1.7 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif}
+  header{padding:14px 20px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:12px}
+  header h1{font-size:16px;margin:0}
+  .tag{font-size:12px;color:var(--muted);border:1px solid var(--line);padding:2px 8px;border-radius:999px}
+  main{padding:18px;max-width:1200px;margin:0 auto;display:grid;gap:16px}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px}
+  .panel h2{font-size:14px;margin:0 0 10px;color:var(--muted);font-weight:600}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+  .kpi{background:#0d1216;border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+  .kpi .v{font-size:20px;font-weight:600}
+  .kpi .k{font-size:11px;color:var(--muted)}
+  table{width:100%;border-collapse:collapse;font-size:12px}
+  th,td{text-align:left;padding:6px 8px;border-bottom:1px solid #1e2a34;white-space:nowrap}
+  th{color:var(--muted);font-weight:500}
+  td.q{max-width:320px;overflow:hidden;text-overflow:ellipsis}
+  .ok{color:var(--ok)} .bad{color:var(--bad)} .warn{color:var(--warn)}
+  button{background:#1d2a34;color:var(--txt);border:1px solid var(--line);border-radius:8px;padding:6px 12px;cursor:pointer;font:12px inherit}
+</style>
+</head>
+<body>
+<header>
+  <h1>FOVEA 后台</h1>
+  <span class="tag" id="roleTag">…</span>
+  <span class="tag" id="now"></span>
+  <a href="/" style="color:#06121c;background:#3fa7ff;border-radius:8px;padding:6px 12px;font-size:12px;font-weight:600;text-decoration:none">返回项目</a>
+  <button id="logout">退出</button>
+</header>
+
+<main>
+  <section class="panel">
+    <h2>服务器状态</h2>
+    <div class="grid" id="kpis"></div>
+  </section>
+
+  <section class="panel">
+    <h2>最近任务（最新 30 条）</h2>
+    <table id="tasks"><thead><tr>
+      <th>时间</th><th>操作人</th><th>状态</th><th>模式</th><th>问题</th><th>耗时</th><th>命中</th><th>答案</th>
+    </tr></thead><tbody></tbody></table>
+  </section>
+</main>
+
+<script>
+const $ = (id)=>document.getElementById(id);
+const esc = (s)=> String(s==null?'':s).replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+async function get(p){ const r=await fetch(p); const j=await r.json().catch(()=>({error:'bad'})); if(!r.ok) throw new Error(j.error||r.status); return j; }
+
+function kpi(k,v){ return `<div class="kpi"><div class="v">${esc(v)}</div><div class="k">${esc(k)}</div></div>`; }
+
+async function reload(){
+  try{
+    const s = await get('/api/admin/status');
+    $('roleTag').textContent = '管理员';
+    $('now').textContent = s.now || '';
+    $('kpis').innerHTML = [
+      kpi('队列中', (s.counts.queued||0)),
+      kpi('运行中', (s.counts.running||0)),
+      kpi('已完成', (s.counts.done||0)),
+      kpi('出错', (s.counts.error||0)),
+      kpi('在线 worker', Object.keys(s.workers||{}).length),
+      kpi('自动审查命中率', ((s.review&&s.review.rate!=null? (s.review.rate*100).toFixed(1):'0')+'%')),
+      kpi('内存使用', s.mem_used_mb + ' / ' + s.mem_total_mb + ' MB'),
+      kpi('磁盘使用', s.disk_used_gb + ' / ' + s.disk_total_gb + ' GB'),
+      kpi('负载(1min)', s.load),
+      kpi('运行时长', s.uptime_str),
+      kpi('今日访客识别', s.guest_today||0),
+    ].join('');
+
+    const t = await get('/api/admin/tasks?limit=30');
+    $('tasks').querySelector('tbody').innerHTML = (t.tasks||[]).map(r=>`
+      <tr>
+        <td>${esc(r.time)}</td>
+        <td title="${esc(r.actor)}">${esc(r.actor || '—')}</td>
+        <td class="${r.status==='done'?'ok':(r.status==='error'?'bad':'warn')}">${esc(r.status)}</td>
+        <td>${esc(r.mode)}</td>
+        <td class="q" title="${esc(r.question)}">${esc(r.question)}</td>
+        <td>${r.elapsed}s</td>
+        <td>${r.hit===1?'<span class="ok">✓</span>':(r.hit===0?'<span class="bad">✗</span>':'—')}</td>
+        <td class="q" title="${esc(r.answer)}">${esc(r.answer)}</td>
+      </tr>`).join('') || '<tr><td colspan="8" style="color:#5d7285">暂无任务</td></tr>';
+  }catch(e){
+    $('kpis').innerHTML = `<div class="kpi"><div class="v bad">${esc(e.message)}</div><div class="k">加载失败</div></div>`;
+  }
+}
+$('logout').onclick = async ()=>{ await fetch('/api/logout',{method:'POST'}); location.href='/'; };
+reload();
+setInterval(reload, 5000);
+</script>
+</body>
+</html>

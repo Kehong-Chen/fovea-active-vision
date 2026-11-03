@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>FOVEA · 入口</title>
+<style>
+  :root{--bg:#0f1418;--panel:#161d24;--line:#243440;--txt:#dbe6ef;--muted:#8aa0b2;--accent:#3fa7ff;--warn:#ffb454;--bad:#ff6b6b}
+  *{box-sizing:border-box}
+  body{margin:0;background:radial-gradient(circle at 30% 20%,#16242e,#0b1014 70%);color:var(--txt);
+       font:14px/1.7 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif;min-height:100vh;
+       display:flex;align-items:center;justify-content:center;padding:24px}
+  .wrap{width:min(920px,100%)}
+  h1{font-size:22px;margin:0 0 6px}
+  .sub{color:var(--muted);font-size:13px;margin-bottom:22px}
+  .cards{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media (max-width:760px){.cards{grid-template-columns:1fr}}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:20px;
+        display:flex;flex-direction:column;gap:10px}
+  .card h2{font-size:15px;margin:0}
+  .card p{color:var(--muted);font-size:12px;margin:0;min-height:38px}
+  button{background:#1d2a34;color:var(--txt);border:1px solid var(--line);border-radius:9px;
+         padding:9px 16px;cursor:pointer;font:13px inherit}
+  button:hover{border-color:var(--accent)}
+  button.primary{background:var(--accent);color:#06121c;border-color:transparent;font-weight:600}
+  button:disabled{opacity:.45;cursor:not-allowed}
+  input{width:100%;background:#0d1216;color:var(--txt);border:1px solid var(--line);
+        border-radius:9px;padding:9px 11px;font:14px/1.5 ui-monospace,Menlo,monospace;letter-spacing:.5px}
+  .msg{font-size:12px;min-height:18px}
+  .msg.err{color:var(--bad)} .msg.ok{color:#3ddc97} .msg.warn{color:var(--warn)}
+  .foot{color:#5d7285;font-size:11px;margin-top:18px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>FOVEA 主动视觉取证</h1>
+  <div class="sub">请先选择进入方式。访客可直接体验；参与者需密钥；管理员密钥可进入后台。</div>
+
+  <div class="cards">
+    <div class="card">
+      <h2>① 访客进入</h2>
+      <p>随时可用，无需密钥。<br>同一设备每天最多识别 <b>3 张</b>图片。</p>
+      <div class="msg" id="guestMsg"></div>
+      <button class="primary" id="guestBtn">以访客身份进入</button>
+    </div>
+
+    <div class="card">
+      <h2>② 参与者进入</h2>
+      <p>需要密钥，可无限次使用。<br>管理员密钥可额外查看服务器状态与后台。</p>
+      <input id="keyInput" placeholder="FV-XXXX-XXXX" autocomplete="off" spellcheck="false" />
+      <div class="msg" id="memberMsg"></div>
+      <button class="primary" id="memberBtn">用密钥进入</button>
+    </div>
+  </div>
+
+  <div class="foot">密钥由管理员分发 · 参与者会话有效至 2027-01-01</div>
+</div>
+
+<script>
+const $ = (id)=>document.getElementById(id);
+async function post(path, body){
+  const r = await fetch(path, {method:'POST', headers:{'Content-Type':'application/json'},
+                               body: JSON.stringify(body||{})});
+  const j = await r.json().catch(()=>({error:'bad json'}));
+  if(!r.ok) throw new Error(j.error || ('HTTP '+r.status));
+  return j;
+}
+async function enterGuest(){
+  $('guestMsg').className='msg'; $('guestMsg').textContent='进入中…';
+  try{
+    const j = await post('/api/login', {mode:'guest'});
+    $('guestMsg').className='msg ok';
+    $('guestMsg').textContent = `已进入，今天剩余 ${j.quota_left} 次识别`;
+    location.href = '/';
+  }catch(e){ $('guestMsg').className='msg err'; $('guestMsg').textContent = e.message; }
+}
+async function enterMember(){
+  const key = $('keyInput').value.trim();
+  if(!key){ $('memberMsg').className='msg err'; $('memberMsg').textContent='请输入密钥'; return; }
+  $('memberMsg').className='msg'; $('memberMsg').textContent='校验中…';
+  try{
+    const j = await post('/api/login', {mode:'member', key});
+    $('memberMsg').className='msg ok';
+    $('memberMsg').textContent = j.role === 'admin'
+      ? `${j.name || ''} 已登录（管理员），进入项目…`
+      : `${j.name || ''} 已登录，进入中…`;
+    location.href = '/';
+  }catch(e){ $('memberMsg').className='msg err'; $('memberMsg').textContent = e.message; }
+}
+$('guestBtn').onclick = enterGuest;
+$('memberBtn').onclick = enterMember;
+$('keyInput').addEventListener('keydown', e=>{ if(e.key==='Enter') enterMember(); });
+</script>
+</body>
+</html>
