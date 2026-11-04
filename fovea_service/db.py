@@ -37,7 +37,8 @@ CREATE TABLE IF NOT EXISTS tasks (
   auto INTEGER DEFAULT 0,
   truth TEXT DEFAULT '',
   hit INTEGER DEFAULT NULL,
-  actor TEXT DEFAULT ''
+  actor TEXT DEFAULT '',
+  cancel INTEGER DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_status ON tasks(status, created);
 CREATE TABLE IF NOT EXISTS guest_usage (
@@ -54,6 +55,7 @@ MIGRATIONS = [
     ("truth", "ALTER TABLE tasks ADD COLUMN truth TEXT DEFAULT ''"),
     ("hit", "ALTER TABLE tasks ADD COLUMN hit INTEGER DEFAULT NULL"),
     ("actor", "ALTER TABLE tasks ADD COLUMN actor TEXT DEFAULT ''"),
+    ("cancel", "ALTER TABLE tasks ADD COLUMN cancel INTEGER DEFAULT 0"),
 ]
 
 
@@ -102,9 +104,9 @@ def claim(worker: str, lease: float = 300.0) -> Optional[Dict]:
     now = time.time()
     with LOCK:
         # 先回收超时任务
-        CONN.execute("UPDATE tasks SET status='queued', worker='' WHERE status='running' AND lease_until<?",
+        CONN.execute("UPDATE tasks SET status='queued', worker='' WHERE status='running' AND lease_until<? AND cancel=0",
                      (now,))
-        r = CONN.execute("SELECT * FROM tasks WHERE status='queued' ORDER BY created LIMIT 1").fetchone()
+        r = CONN.execute("SELECT * FROM tasks WHERE status='queued' AND cancel=0 ORDER BY created LIMIT 1").fetchone()
         if r is None:
             CONN.commit()
             return None
@@ -216,3 +218,23 @@ def recent(limit: int = 30) -> List[Dict]:
             "time": time.strftime("%m-%d %H:%M", time.localtime(d.get("created") or 0)),
         })
     return out
+
+def request_cancel(tid: str) -> str:
+    """请求取消：排队中直接标 cancelled；运行中打 cancel 标记，等 worker 自行中止。"""
+    with LOCK:
+        r = CONN.execute("SELECT status FROM tasks WHERE id=?", (tid,)).fetchone()
+        if not r:
+            return ""
+        st = r["status"]
+        if st in ("queued", "running"):
+            # 立刻落成 cancelled：worker 之后的 complete 会被忽略，不会覆盖状态
+            CONN.execute("UPDATE tasks SET cancel=1, status='cancelled', lease_until=0 WHERE id=?", (tid,))
+            CONN.commit()
+            return "cancelled"
+    return ""
+
+
+def is_cancelled(tid: str) -> bool:
+    with LOCK:
+        r = CONN.execute("SELECT cancel FROM tasks WHERE id=?", (tid,)).fetchone()
+    return bool(r and r["cancel"])

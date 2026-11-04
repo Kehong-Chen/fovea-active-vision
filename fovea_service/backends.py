@@ -20,12 +20,11 @@ from typing import Dict, List, Optional, Tuple
 from fovea_lite.geometry import Box, inside
 from fovea_lite.world import Scene, SyntheticWorld, WorldConfig
 
-PROBE_SYS = """你是一个「可解性评估器」。给定原始图像、一个候选裁剪区域、以及用户问题，
-你只需判断：这个候选区域里的信息是否足以回答问题。
-- 如果候选区域与问题所指位置无关，回答 No。
-- 如果区域太模糊、目标太小看不清，回答 No。
-- 只输出 Yes 或 No，不要回答问题本身。
-输出格式：<answer>Yes</answer> 或 <answer>No</answer>"""
+PROBE_SYS = """你是「目标包含判定器」。你只会看到从原图裁下来的一块区域（看不到原图其他部分）。
+判断：只看这一块，目标物体是否完整、清晰地出现在其中？
+- 完整且清晰 → Yes
+- 只有一部分、模糊、看不到、或只是同类物体 → No
+只输出：<answer>Yes</answer> 或 <answer>No</answer>"""
 
 
 # ------------------------------------------------------------------ 合成
@@ -158,20 +157,20 @@ class VLBackend:
         return str(data["choices"][0]["message"]["content"])
 
     def probe(self, box: Box) -> float:
-        text = (f"用户问题：{self.question}\n"
-                f"第一张图是原图，第二张是候选裁剪区域（归一化坐标 {tuple(round(x,3) for x in box)}）。\n"
-                f"请判断该区域信息是否足以回答问题，只回答 Yes 或 No。")
+        text = (f"用户的问题：{self.question}\n"
+                f"你看到的是从原图裁下来的一块区域（归一化坐标 {tuple(round(x,3) for x in box)}，看不到原图其他部分）。\n"
+                f"判断：只看这一块，目标物体是否完整、清晰地出现在其中？完整且清晰→Yes；只有一部分/模糊/看不到→No。只输出 Yes 或 No。")
         body = {
             "model": self.model,
             "messages": [
                 {"role": "system", "content": PROBE_SYS},
                 {"role": "user", "content": [
                     {"type": "text", "text": text},
-                    {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + self._b64(self.img)}},
+                    # 盲探：只给裁剪，不给原图（给了原图模型会"看到答案"从而一律判 Yes）
                     {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + self._b64(self._crop(box))}},
                 ]},
             ],
-            "temperature": 0.7,
+            "temperature": 0.3,
             "max_tokens": 32,
         }
         out = self._chat(body).lower()
@@ -303,3 +302,24 @@ def parse_answer_json(raw: str, size=None) -> Dict:
             return {"text": ans, "point": point, "labels": labels,
                     "reason": str(d.get("reason") or ""), "raw": raw}
     return {"text": raw, "point": None, "labels": [], "reason": "", "raw": raw}
+
+
+def annotate(result):
+    """统一标注：命中真值→指真值；未命中→不给箭头；无真值→指框心。"""
+    if not isinstance(result, dict):
+        return
+    truth = result.get("truth")
+    box = result.get("box")
+    if truth:
+        if result.get("hit"):
+            tgt = truth.get("point") if truth.get("kind") == "point" else truth.get("target")
+            if tgt and len(tgt) == 2:
+                result["answer_point"] = [round(float(tgt[0]), 4), round(float(tgt[1]), 4)]
+                result["answer_point_method"] = "truth"
+                return
+        result.pop("answer_point", None)
+        result["answer_point_method"] = "not_found"
+        return
+    if box and len(box) == 4:
+        result["answer_point"] = [round(box[0] + box[2] / 2, 4), round(box[1] + box[3] / 2, 4)]
+        result["answer_point_method"] = "final_box"

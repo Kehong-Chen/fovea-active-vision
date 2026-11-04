@@ -21,7 +21,9 @@
   @media (max-width:1000px){main{grid-template-columns:1fr}}
   .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px}
   #stage{position:relative;display:flex;align-items:center;justify-content:center;min-height:320px}
-  canvas{max-width:100%;border-radius:8px;cursor:crosshair;background:#000}
+  canvas{max-width:100%;border-radius:8px;cursor:crosshair;background:#000;transition:opacity .15s;touch-action:none;-webkit-user-select:none;user-select:none;-webkit-tap-highlight-color:transparent}
+  canvas.busy{cursor:not-allowed;opacity:.85}
+  #stage{touch-action:none}
   .hint{color:var(--muted);font-size:12px;margin-top:8px}
   label.field{display:block;font-size:12px;color:var(--muted);margin:10px 0 4px}
   textarea,input[type=text]{width:100%;background:#0d1216;color:var(--txt);
@@ -97,7 +99,7 @@
       <span><i class="sw" style="background:#ff6b6b"></i>最终选定</span>
       <span><i class="sw" style="background:#ffb454"></i>原定真值（勾选后显示）</span>
     </div>
-    <div class="hint">在图上按住拖动，可手动画出「初始种子框」（默认画面中心 40%）。拖动后点“开始搜索”。</div>
+    <div class="hint">在图上按住拖动，可手画出「初始种子框」——它同时就是<b>搜索范围</b>，算法只在这个框内找（默认画面中心 40%）；手机上是按住拖动，松手即生效。</div>
     <div id="meta"></div>
   </section>
 
@@ -176,6 +178,7 @@ function selectedModes(){
 function updateControls(){
   const n = selectedModes().length;
   const ready = !!imageId && !busy;
+  cv.classList.toggle('busy', !!busy);
   $('runBtn').disabled = !ready || n === 0;
   const parallel = n >= 2;
   $('paraBadge').classList.toggle('on', parallel);
@@ -327,7 +330,9 @@ function drawAnswerArrow(ax, ay){
   const hbx = Tx + ux*hl, hby = Ty + uy*hl;                     // 箭头底边中心
   const qx = -uy, qy = ux;                                      // 垂直方向
 
-  const isTruth = !!(result && result.answer_point_method === 'scene_truth');
+  // 没有答案点（未命中/未判定）就不画箭头
+  if (result && result.hit === false) return;
+  const isTruth = !!(result && result.answer_point_method === 'truth');
   const LBL = isTruth ? '测试真值' : '答案';
   const COL = '#e8232a';
 
@@ -387,7 +392,7 @@ function drawAnswerArrow(ax, ay){
   round(bx0, by0, bw, bh, r);
   ctx.fillStyle = 'rgba(6,18,28,.82)'; ctx.fill();
   ctx.strokeStyle = 'rgba(63,167,255,.55)'; ctx.lineWidth = 1; ctx.stroke();
-  ctx.fillStyle = '#4db8ff';
+  ctx.fillStyle = isTruth ? '#4db8ff' : '#ffffff';
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.fillText(LBL, bx0 + bw/2, by0 + bh/2 + 0.5);
   ctx.restore();
@@ -441,24 +446,87 @@ function draw(){
 }
 
 /* ---------- 交互：拖动种子框 ---------- */
+let _rafPending = false;
+function drawSoon(){
+  if (_rafPending) return;
+  _rafPending = true;
+  requestAnimationFrame(()=>{ _rafPending = false; draw(); });
+}
+
 function evPos(e){
   const r = cv.getBoundingClientRect();
   return {x:(e.clientX-r.left)/r.width, y:(e.clientY-r.top)/r.height};
 }
-cv.addEventListener('mousedown', e=>{ drag = evPos(e); moved = 0; });
-cv.addEventListener('mousemove', e=>{
+/* 拖动种子框：Pointer Events 统一处理鼠标/触摸/触控笔 */
+cv.addEventListener('pointerdown', e=>{
+  if (e.pointerType === 'mouse' && e.button !== 0) return;   // 只认左键
+  if (busy){                                                 // 搜索进行中：种子框锁定
+    $('status').textContent = '搜索进行中，种子框已锁定；点「重置视图」可取消当前搜索';
+    return;
+  }
+  drag = evPos(e);
+  moved = 0;
+  try { cv.setPointerCapture(e.pointerId); } catch(_) {}
+  e.preventDefault();
+});
+
+cv.addEventListener('pointermove', e=>{
   if(!drag) return;
   const p = evPos(e);
   moved = Math.max(moved, Math.abs(p.x-drag.x), Math.abs(p.y-drag.y));
   const u = Math.min(drag.x,p.x), v = Math.min(drag.y,p.y);
   const w = Math.max(0.02, Math.abs(p.x-drag.x)), h = Math.max(0.02, Math.abs(p.y-drag.y));
   seed = {u, v, w:Math.min(w,1-u), h:Math.min(h,1-v)};
-  draw();
+  drawSoon();
+  e.preventDefault();
 });
-window.addEventListener('mouseup', ()=>{
-  if (drag && moved < 0.01 && autoReview && imageId) setTruthPoint(drag);
+
+function endDrag(e){
+  if (!drag) return;
+  // 轻点（几乎没移动）且开着自动审查 → 设真值点
+  if (moved < 0.01 && autoReview && imageId) setTruthPoint(drag);
   drag = null;
-});
+  try { cv.releasePointerCapture(e.pointerId); } catch(_) {}
+}
+
+cv.addEventListener('pointerup', endDrag);
+cv.addEventListener('pointercancel', ()=>{ drag = null; draw(); });   // 系统打断时保留已画的框
+/* 兜底：老浏览器只发 mouse 事件时也能用 */
+if (!window.PointerEvent){
+  cv.addEventListener('mousedown', e=>{
+    if (busy){ $('status').textContent = '搜索进行中，种子框已锁定；点「重置视图」可取消当前搜索'; return; }
+    drag = evPos(e); moved = 0;
+  });
+  cv.addEventListener('mousemove', e=>{
+    if(!drag) return;
+    const p = evPos(e);
+    moved = Math.max(moved, Math.abs(p.x-drag.x), Math.abs(p.y-drag.y));
+    const u = Math.min(drag.x,p.x), v = Math.min(drag.y,p.y);
+    const w = Math.max(0.02, Math.abs(p.x-drag.x)), h = Math.max(0.02, Math.abs(p.y-drag.y));
+    seed = {u, v, w:Math.min(w,1-u), h:Math.min(h,1-v)};
+    drawSoon();
+  });
+  window.addEventListener('mouseup', ()=>{
+    if (drag && moved < 0.01 && autoReview && imageId) setTruthPoint(drag);
+    drag = null;
+  });
+}
+
+/* ---------- worker 状态提示 ---------- */
+let workerHint = '等待 worker…';
+let workerHintAt = 0;
+async function refreshWorkerHint(force){
+  const now = Date.now();
+  if (!force && now - workerHintAt < 5000) return;
+  workerHintAt = now;
+  try{
+    const h = await api('/api/health');
+    const n = Object.keys(h.workers || {}).length;
+    workerHint = n > 0
+      ? `worker 在线但正忙（${n} 个），前面还有任务在跑`
+      : '本机 worker 未在线，请运行 fovea_deploy/start_worker.ps1';
+  }catch(e){ workerHint = '无法获取 worker 状态'; }
+}
 
 /* ---------- 网络 ---------- */
 async function api(path, opt){
@@ -503,7 +571,28 @@ $('drop').addEventListener('drop', e=> upload(e.dataTransfer.files[0]));
 $('demoBtn').onclick = ()=> loadDemo(false);
 $('newBtn').onclick = ()=> loadDemo(true);
 $('showTruth').onchange = e => { showTruth = e.target.checked; draw(); };
-$('resetBtn').onclick = () => { seed={u:0.3,v:0.3,w:0.4,h:0.4}; draw(); };
+$('resetBtn').onclick = async () => {
+  const tid = taskId;
+  clearTimeout(timer); timer = null;
+  taskId = null; busy = false;
+
+  // 通知服务端：排队中的直接取消，运行中的打标记让 worker 自己中止（不会留僵尸任务）
+  if (tid){
+    try {
+      await api('/api/cancel', {method:'POST', headers:{'Content-Type':'application/json'},
+                                body: JSON.stringify({task_id: tid})});
+    } catch(e){ /* 忽略：任务可能已结束 */ }
+  }
+
+  // 清掉画面上的所有搜索痕迹：候选框、最终框、箭头、结果与步骤
+  steps = []; result = null;
+  seed = {u:0.3, v:0.3, w:0.4, h:0.4};
+  $('res').innerHTML = ''; renderSteps();
+  $('cmpPanel').style.display = 'none';      // 关闭并行实验视图
+
+  $('status').textContent = tid ? '已重置：搜索已取消，视图已清空' : '已重置视图';
+  draw(); updateControls();
+};
 $('autoReview').onchange = e => {
   autoReview = e.target.checked;
   if (autoReview && truth){ showTruth = true; $('showTruth').checked = true; }
@@ -532,6 +621,7 @@ async function run(){
   clearTimeout(timer);
   $('runBtn').disabled = true;
   $('status').textContent = '已提交，排队中…';
+  refreshWorkerHint(true);
   steps = []; result = null; renderSteps(); $('res').innerHTML=''; draw();
   try{
     const j = await api('/api/query', {method:'POST', headers:{'Content-Type':'application/json'},
@@ -551,16 +641,21 @@ async function run(){
 
 async function poll(){
   clearTimeout(timer);
+  const myTid = taskId;                 // 记住本轮任务，重置后就不再继续
   try{
-    const t = await api('/api/task/'+taskId);
+    const t = await api('/api/task/'+myTid);
+    if (taskId !== myTid) return;       // 已被重置/切换，丢弃这次结果
     const n = (t.steps||[]).length;
     const changed = (n !== steps.length);
     steps = t.steps || [];
     if (changed) renderSteps();
     if (t.status === 'done'){
       result = t.result;
+      const scores = steps.map(s=> s.score);
+      const flat = scores.length >= 3 && scores.every(v => Math.abs(v - scores[0]) < 1e-9);
       $('status').textContent = `完成 · ${t.mode} · ${steps.length} 次探测 · ${t.elapsed}s`
-        + (localTask ? ' · 本地 sim' : ' · 经 worker 调 VLM');
+        + (localTask ? ' · 本地 sim' : ' · 经 worker 调 VLM')
+        + (flat ? ' · ⚠ 探针无区分度（所有区域同分），搜索无法收敛' : '');
       $('runBtn').disabled = false;
       draw(); renderResult(t);
       if (autoReview) refreshStats();
@@ -573,12 +668,13 @@ async function poll(){
     }
     const waited = (Date.now() - submittedAt) / 1000;
     if (t.status === 'queued'){
-      $('status').textContent = waited > 15
-        ? `排队中…（已等 ${Math.round(waited)} 秒，可能没有在线 worker；可稍后重试）`
+      refreshWorkerHint();                    // 每 5 秒更新一次"忙"还是"不在线"
+      $('status').textContent = waited > 8
+        ? `排队中…（已等 ${Math.round(waited)} 秒 · ${workerHint}）`
         : '排队中…';
-      if (waited > 60){                       // 别让按钮永远锁死
+      if (waited > 90){                       // 别让按钮永远锁死
         $('runBtn').disabled = false;
-        $('status').textContent = `排队超过 60 秒，没有 worker 领取。任务仍保留在队列里，可重新提交。`;
+        $('status').textContent = `排队超过 90 秒 · ${workerHint}。任务仍在队列里，可稍后查看。`;
       }
     } else {
       $('status').textContent = `运行中… 已探测 ${steps.length} 次（${t.elapsed}s）`;
@@ -608,9 +704,9 @@ function renderResult(t){
   const b = (result.box||[]).map(x=>x.toFixed(3)).join(', ');
   let hit = '';
   if (typeof result.hit === 'boolean'){
-    hit = `<span class="badge ${result.hit?'hit':'miss'}">${result.hit?'✓ 命中真值':'✗ 未命中真值'}</span>`;
+    hit = `<span class="badge ${result.hit?'hit':'miss'}">${result.hit?'✓ 命中真值':'✗ 未找到目标（覆盖不到真值）'}</span>`;
   } else if (!autoReview){
-    hit = `<span class="badge" style="background:rgba(138,160,178,.12);color:#8aa0b2">仅输出最终框</span>`;
+    hit = `<span class="badge" style="background:rgba(138,160,178,.12);color:#8aa0b2">未设真值 · 仅输出最终框</span>`;
   } else {
     hit = `<span class="badge" style="background:rgba(255,180,84,.12);color:#ffb454">未判定（无真值）</span>`;
   }

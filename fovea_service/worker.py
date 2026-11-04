@@ -16,9 +16,11 @@
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 import atexit
 import io
 import json
+import sys
 import os
 import random
 import time
@@ -26,7 +28,7 @@ import urllib.request
 from typing import Dict, Optional
 
 from . import search
-from .backends import SimBackend, VLBackend
+from .backends import SimBackend, VLBackend, annotate as _annotate
 
 LOCK_PATH = os.path.join(os.path.expanduser("~"), ".fovea_worker.pid")
 
@@ -108,10 +110,13 @@ def _backend_for(task: Dict, server: str, kind: str, question: str, token: str =
     return VLBackend(raw, question)
 
 
-def run_once(server: str, token: str, kind: str, worker: str, lease: float) -> bool:
+def claim_task(server: str, token: str, worker: str, lease: float) -> Optional[Dict]:
+    """只领任务，不处理（并发体现在这里：多个线程可以同时领）。"""
     task = _req(f"{server}/api/claim", {"worker": worker, "token": token, "lease": lease})
-    if not task.get("id"):
-        return False
+    return task if task.get("id") else None
+
+
+def process_task(task: Dict, server: str, token: str, kind: str, worker: str, lease: float) -> None:
     tid, mode, question = task["id"], task.get("mode", "greedy"), task.get("question", "")
     t0 = time.time()
     steps: list = []
@@ -126,9 +131,13 @@ def run_once(server: str, token: str, kind: str, worker: str, lease: float) -> b
             steps.append(s)
             # 实时上报，前端才能看到"已探测 N 次 / 已用 X 秒"
             try:
-                _req(f"{server}/api/progress", {"task_id": tid, "token": token, "worker": worker,
-                                                "lease": lease, "steps": steps,
-                                                "elapsed": round(time.time() - t0, 2)})
+                r = _req(f"{server}/api/progress", {"task_id": tid, "token": token, "worker": worker,
+                                                   "lease": lease, "steps": steps,
+                                                   "elapsed": round(time.time() - t0, 2)})
+                if isinstance(r, dict) and r.get("cancelled"):
+                    raise RuntimeError("cancelled by user")   # 用户点了重置，立即中止
+            except RuntimeError:
+                raise
             except Exception:
                 pass
 
@@ -157,15 +166,8 @@ def run_once(server: str, token: str, kind: str, worker: str, lease: float) -> b
             except Exception as e:  # noqa: BLE001
                 result["answer"] = ""
                 result["answer_error"] = f"{type(e).__name__}: {e}"
-        if not result.get("answer_point"):
-            sc = task.get("scene")
-            if sc and sc.get("target"):
-                result["answer_point"] = [round(sc["target"][0], 4), round(sc["target"][1], 4)]
-                result["answer_point_method"] = "scene_truth"
-            elif result.get("box"):
-                b = result["box"]
-                result["answer_point"] = [round(b[0] + b[2] / 2, 4), round(b[1] + b[3] / 2, 4)]
-                result["answer_point_method"] = "final_box"
+        # 标注：命中就指真值本身；未命中不给箭头；无真值才指框心
+        _annotate(result)
         _req(f"{server}/api/complete", {"task_id": tid, "token": token, "steps": steps,
                                         "result": result, "elapsed": round(time.time() - t0, 2)})
         print(f"[worker] done {tid} mode={mode} steps={len(steps)} {round(time.time()-t0,2)}s")
@@ -174,7 +176,6 @@ def run_once(server: str, token: str, kind: str, worker: str, lease: float) -> b
                                         "result": None, "elapsed": round(time.time() - t0, 2),
                                         "error": f"{type(e).__name__}: {e}"})
         print(f"[worker] error {tid}: {e}")
-    return True
 
 
 def main():
@@ -184,43 +185,56 @@ def main():
     ap.add_argument("--backend", default="sim", choices=["sim", "vlm"])
     ap.add_argument("--worker", default=f"w-{os.uname().nodename if hasattr(os,'uname') else 'pc'}-{os.getpid()}")
     ap.add_argument("--lease", type=float, default=300.0)
-    ap.add_argument("--interval", type=float, default=2.0)
+    ap.add_argument("--interval", type=float, default=1.5)
+    ap.add_argument("--concurrency", type=int, default=2, help="同时跑几个任务（长任务不再互相堵住）")
     ap.add_argument("--once", action="store_true", help="只领一个任务就退出")
     args = ap.parse_args()
 
     if not acquire_singleton():
         return
 
-    print(f"[worker] server={args.server} backend={args.backend} worker={args.worker} pid={os.getpid()}")
+    n = max(1, args.concurrency)
+    print(f"[worker] server={args.server} backend={args.backend} worker={args.worker} "
+          f"pid={os.getpid()} concurrency={n}")
     print(f"[worker] 单实例锁：{LOCK_PATH}")
-    idle = 0
+
+    pool = ThreadPoolExecutor(max_workers=n)
+    futures = set()
     auth_fail = 0
     try:
         while True:
-            try:
-                got = run_once(args.server, args.token, args.backend, args.worker, args.lease)
-                if args.once and got:
-                    return
-                idle = 0 if got else idle + 1
-                auth_fail = 0
-            except Exception as e:  # noqa: BLE001
-                code = getattr(e, "code", 0)
-                if code in (401, 403):
-                    auth_fail += 1
-                    print(f"[worker] 认证失败（{code}），连续 {auth_fail} 次：{e}")
-                    if auth_fail >= 3:
-                        print("[worker] token 可能已被轮换/失效，本进程退出，避免变成僵尸进程。")
-                        return
-                else:
+            futures = {f for f in futures if not f.done()}
+            got_any = False
+            while len(futures) < n:                     # 有空位就继续领
+                try:
+                    task = claim_task(args.server, args.token, args.worker, args.lease)
                     auth_fail = 0
-                    print(f"[worker] poll error: {e}")
-                idle += 1
-            time.sleep(args.interval if idle < 5 else min(15.0, args.interval * 3))
+                except Exception as e:  # noqa: BLE001
+                    code = getattr(e, "code", 0)
+                    if code in (401, 403):
+                        auth_fail += 1
+                        print(f"[worker] 认证失败（{code}），连续 {auth_fail} 次：{e}")
+                        if auth_fail >= 3:
+                            print("[worker] token 可能已失效，退出以避免僵尸进程。")
+                            sys.exit(66)                # 66：让看门狗别再重启
+                    else:
+                        print(f"[worker] poll error: {e}")
+                    break
+                if not task:
+                    break
+                got_any = True
+                futures.add(pool.submit(process_task, task, args.server, args.token,
+                                        args.backend, args.worker, args.lease))
+            if args.once and (futures or got_any):
+                for f in list(futures):
+                    f.result()
+                return
+            time.sleep(args.interval)
     except KeyboardInterrupt:
         print("\n[worker] bye")
     finally:
+        pool.shutdown(wait=True)
         _release_lock()
-
 
 if __name__ == "__main__":
     main()

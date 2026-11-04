@@ -47,7 +47,7 @@ def _better(s: float, b: Box, best_s: float, best_b: Box) -> bool:
 
 # ---------------------------------------------------------------- greedy
 def run_greedy(seed: Box, probe: ProbeFn, on_step: OnStep,
-               k: int = 3, factors: Sequence[float] = (1.5, 1.0, 0.8)) -> Dict:
+               k: int = 3, factors: Sequence[float] = (1.0, 0.7, 0.5)) -> Dict:
     """论文默认档：三个尺度候选，每个探 k 次取均值，选最高（同分取更紧的框）。"""
     best_s, best_b = -1.0, seed
     for f in factors:
@@ -61,7 +61,7 @@ def run_greedy(seed: Box, probe: ProbeFn, on_step: OnStep,
 
 # ---------------------------------------------------------------- lookahead
 def run_lookahead(seed: Box, probe: ProbeFn, on_step: OnStep,
-                  k: int = 2, factors: Sequence[float] = (1.5, 1.0, 0.8)) -> Dict:
+                  k: int = 2, factors: Sequence[float] = (1.0, 0.7, 0.5)) -> Dict:
     """一步前瞻：value(d)=0.5*J(d)+0.5*J(下一步最可能的细化)。"""
     best_v, best_b, best_s = -1.0, seed, -1.0
     for f in factors:
@@ -83,6 +83,7 @@ def run_hrd(seed: Box, probe: ProbeFn, on_step: OnStep,
             tau: float = 0.40, max_bt: int = 2, k_verify: int = 3,
             k_grid: int = 2, size_fn: Optional[Callable[[Box], float]] = None) -> Dict:
     """分层探测 + 覆盖先验 + 叶子验证回退。k_grid 次采样降低二值打平。"""
+    # 搜索范围 = seed：第一次分层就在 seed 框内切 3×3，不再扫全图
     def rank(cells: List[Box], k: int) -> List[Tuple[float, float, Box]]:
         rows = []
         for c in cells:
@@ -92,7 +93,7 @@ def run_hrd(seed: Box, probe: ProbeFn, on_step: OnStep,
         rows.sort(key=lambda t: t[0], reverse=True)
         return rows
 
-    level1 = rank(_grid(m), k_grid)
+    level1 = rank(_subcells(seed, m), k_grid)
 
     def descend(start: Box) -> Box:
         best = start

@@ -110,9 +110,30 @@ def _truth_of(iid: str):
     return None
 
 
+def _annotate(result):
+    """统一标注：命中真值→指真值；未命中→不给箭头；无真值→指框心。"""
+    if not isinstance(result, dict):
+        return
+    truth = result.get("truth")
+    box = result.get("box")
+    if truth:
+        if result.get("hit"):
+            tgt = truth.get("point") if truth.get("kind") == "point" else truth.get("target")
+            if tgt and len(tgt) == 2:
+                result["answer_point"] = [round(float(tgt[0]), 4), round(float(tgt[1]), 4)]
+                result["answer_point_method"] = "truth"
+                return
+        result.pop("answer_point", None)
+        result["answer_point_method"] = "not_found"
+        return
+    if box and len(box) == 4:
+        result["answer_point"] = [round(box[0] + box[2] / 2, 4), round(box[1] + box[3] / 2, 4)]
+        result["answer_point_method"] = "final_box"
+
+
 def _review(task, result):
-    """开了自动审查且任务带真值 → 判定命中。返回 (result, hit)，hit=None 表示未判定。"""
-    if not task or not task.get("auto") or not result:
+    """有真值就判定命中（供界面显示）；只有开了自动审查的任务才把 hit 记进统计。"""
+    if not task or not result:
         return result, None
     truth = task.get("truth")
     box = result.get("box")
@@ -125,7 +146,7 @@ def _review(task, result):
         hit = bool(inside(tuple(box), tuple(truth.get("target") or (0, 0))))
     result["hit"] = hit
     result["truth"] = truth
-    return result, (1 if hit else 0)
+    return result, ((1 if hit else 0) if task.get("auto") else None)
 
 
 # ------------------------------------------------------------------ 本地执行（inline 模式）
@@ -171,17 +192,8 @@ def _execute(task: Dict, kind: str = "sim") -> None:
                 except Exception as e:  # noqa: BLE001
                     result["answer"] = ""
                     result["answer_error"] = f"{type(e).__name__}: {e}"
-            if not result.get("answer_point"):
-                t = _truth_of(task["image_id"])
-                if t and t.get("kind") == "scene":
-                    # 合成场景：真值就是答案，直接指到目标本身
-                    result["answer_point"] = [round(t["target"][0], 4), round(t["target"][1], 4)]
-                    result["answer_point_method"] = "scene_truth"
-                elif result.get("box"):
-                    b = result["box"]
-                    result["answer_point"] = [round(b[0] + b[2] / 2, 4), round(b[1] + b[3] / 2, 4)]
-                    result["answer_point_method"] = "final_box"
             result, hit = _review(task, result)
+            _annotate(result)          # 判定完再标注：命中指真值、未命中不给箭头
             db.complete(tid, steps, result, round(time.time() - t0, 2), hit=hit)
         except Exception as e:  # noqa: BLE001
             db.complete(tid, steps, None, round(time.time() - t0, 2), f"{type(e).__name__}: {e}")
@@ -450,7 +462,7 @@ class Handler(BaseHTTPRequestHandler):
                         "quota_used": used}, 429)
             tid = uuid.uuid4().hex[:12]
             auto = bool(body.get("auto"))
-            truth = _truth_of(iid) if auto else None
+            truth = _truth_of(iid)
             actor = (auth.name_of(STATE["keys"], sess.get("kid", ""))
                      if sess and sess.get("role") != "guest" else "访客")
             db.create(tid, iid, body.get("question", ""), mode,
@@ -475,6 +487,13 @@ class Handler(BaseHTTPRequestHandler):
             out["scene"] = _scene_of(t["image_id"])
             return self._json(out)
 
+        if p == "/api/cancel":
+            tid = body.get("task_id")
+            if not tid:
+                return self._json({"error": "缺少 task_id"}, 400)
+            st = db.request_cancel(tid)
+            return self._json({"ok": bool(st), "state": st or "not_found"})
+
         if p == "/api/progress":
             if not self._auth(body):
                 return self._json({"error": "bad token"}, 403)
@@ -483,7 +502,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"error": "no such task"}, 404)
             db.progress(tid, body.get("steps") or [], float(body.get("elapsed") or 0))
             db.heartbeat(tid, str(body.get("worker") or "w"), float(body.get("lease") or 300))
-            return self._json({"ok": True})
+            return self._json({"ok": True, "cancelled": db.is_cancelled(tid)})
 
         if p == "/api/complete":
             if not self._auth(body):
@@ -492,7 +511,10 @@ class Handler(BaseHTTPRequestHandler):
             t = db.get(tid) if tid else None
             if not t:
                 return self._json({"error": "no such task"}, 404)
+            if db.is_cancelled(tid):
+                return self._json({"ok": True, "ignored": True})
             res, hit = _review(t, body.get("result"))
+            _annotate(res)
             db.complete(tid, body.get("steps") or [], res,
                         float(body.get("elapsed") or 0), body.get("error") or "", hit=hit)
             return self._json({"ok": True, "hit": hit})
